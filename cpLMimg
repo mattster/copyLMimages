@@ -5,13 +5,14 @@ use Getopt::Long;
 use File::Copy;
 use File::Path qw(make_path);
 
-my $this = "cpLMimages";
+my $thisisme = "cpLMimages";
 
 ## setup defaults
 my $dest_root = "./";
 my $source_root = "/cygdrive/l/";
-my $filemode = "true";
-my $logfile = "/tmp/$this.log." . mytimestamp() . ".txt";
+my $filemode = 1;
+my $dirmode = 0;
+my $logfile = "/tmp/$thisisme.log." . mytimestamp() . ".txt";
 my $verbose = "true";
 my $silent = "";
 my $dbg = "";
@@ -24,9 +25,9 @@ my @files = {};
 my $numcopies = 0;
 my $usage = <<END;
 
-$this : Copy Lexmark Image files from the Lexmark server to a destination
+$thisisme : Copy Lexmark Image files from the Lexmark server to a destination
 
-usage: $0 [OPTIONS] FILE(s)
+usage: $thisisme [OPTIONS] FILE(s)
 
 OPTIONS:
     -f                      file mode (defualt) - FILE contains a
@@ -65,6 +66,7 @@ FILE(s)
     in directory mode:    
             one or more files with a list of directories with
             images to be copied
+
 END
 
 ##
@@ -78,13 +80,18 @@ if ($#ARGV == -1) {
 ##
 ## read in the switches if there are any
 ##
-GetOptions ('src:s' => \$tmp1,
+GetOptions ('f' => \$filemode,
+            'd' => \$dirmode,
+            'src:s' => \$tmp1,
             'dest:s' => \$tmp2,
             'rem:s' => \$root_rem,
             'help|h|?' => \$showhelp,
             'silent' => \$silent,
             'debug' => \$dbg);
 
+if ($dirmode) {
+    $filemode = 0;
+}
 if ($showhelp) {
     print STDERR $usage;
     exit -1;
@@ -111,36 +118,44 @@ unless ($silent) {print STDERR "writing logs to $logfile\n";}
 ##
 ## read through the directory list
 ##
-
 #add escapes to the root variables for pattern matching
 $root_rem_esc = escapifypath($root_rem);
 $source_root_esc = escapifypath($source_root);
 $dest_root_esc = escapifypath($dest_root);
 
-unless ($silent) {print STDERR "copying files ...\n";}
+unless ($silent) {print STDERR "copying files:\n";}
 while (<>) {
-    ## do root_remove and source_root replacements on current directory
-    mychomp($_);                    # remove newline / CR
-    fixpathname($_);
-    #if ($dbg) {print "----- dol _ before = $_\n";}
-    $_ =~ s{^($root_rem_esc)}{$source_root_esc};
-    $_ =~ s{\\}{}g;
-    #if ($dbg) {print "----- dol _ after = $_\n";}
+        ## do root_remove and source_root replacements on current item
+        mychomp($_);                    # remove newline / CR
+        undslash($_);                   # fix double slashes
+        if ($dbg) {print "----- dol _ before = $_\n";}
+        $_ =~ s{^($root_rem_esc)}{$source_root_esc};
+        $_ =~ s{\\}{}g;
+        if ($dbg) {print "----- dol _ after = $_\n";}
+
+        # set the source
+        $srcdir = $_;
+        if ($dbg) {print "+++++ source:\n $srcdir\n";}
+        
+    if ($filemode) {    ## running in filemode - get the file
+        $srcdir = getjustpath($_);
+        @files = escapifypath($_);
+    }
+
+    else {              ## get list of files from directory
+        ## get list of tif files in source directory
+        fixpathname($srcdir);       #add trailing slash if needed
+        $srcdir_esc = escapifypath($srcdir);
+        @files = <$srcdir_esc*.tif>;
+        if ($dbg) { print "+++++ num files = " . @files . "\n"; }
+    }
     
-    # set the source directory
-    $srcdir = $_;
-    $srcdir_esc = escapifypath($srcdir);
-    if ($dbg) {print "+++++ source dir:\n $srcdir\n";}
-    if ($dbg) {print "+++++ source dir esc:\n $srcdir_esc\n";}
-    
-    ## get list of tif files in source directory
-    @files = <$srcdir_esc*.tif>;
-    if ($dbg) { print "+++++ num files = " . @files . "\n"; }
     
     ## copy each file to destination
     foreach $curfile_fullpath (@files) {
+        fixLMfilename($curfile_fullpath);        
+        
         if ($dbg) {print "+++++ curfile_fullpath: $curfile_fullpath\n";}
-
         # define the destination path
         ($dest_path = $srcdir) =~ s/^($source_root_esc)?/$dest_root_esc/;
         if ($dbg) {print "+++++ dest path: $dest_path\n";}
@@ -216,16 +231,21 @@ sub mychomp
     return $_[0];
 }
 
+#####
+## undslash - changes double slashes ("//") to single ("/")
+#####
+sub undslash
+{
+    $_[0] =~ s{[\/]{2}}{\/}g;
+    
+    return $_[0];
+}
 
 #####
-## fixpathname - adds a / to the end of a pathname if necessary;
-##      also removes double slashes if there are any
+## fixpathname - adds a / to the end of a pathname if necessary
 #####
 sub fixpathname
 {
-    # change double slashes to single slashes
-    $_[0] =~ s{[\/]{2}}{\/}g;
-
     # add a slash to the end of the path if one isn't there
     $_[0] =~ s{^(.*)([^\/])$}{$1$2\/};
     
@@ -261,4 +281,58 @@ sub mytimestamp
     my $dmin = sprintf("%02d", $min);
     my $dsec = sprintf("%02d", $sec);
     return $year . $dmon . $dmday . $dhour . $dmin . $dsec;
+}
+
+#####
+## fixLMfilename - fixes the filename taken from the database
+##      that Lexmark writes to; a few things are weird, so
+##      we're going to be very nice and fix them
+#####
+sub fixLMfilename
+{
+    #print STDERR "----- starting with $_[0]\n";
+    ## add a comma if necessary
+    $_[0] =~ s{(\/[A-Z]+)  ([A-Z]+ - )}{$1, $2};
+    
+    ## add a comma even if the double spaces are escaped
+    $_[0] =~ s{(\/[A-Z]+)\\ \\ ([A-Z]+\\ -\\ )}{$1\\,\\ $2};
+    
+    ## change "scans__" to "scans_"
+    $_[0] =~ s/scans__/scans_/;
+    
+    #print STDERR "---- cranked out $_[0]\n";
+    return $_[0];
+}
+
+#####
+## getjustpath - returns just the path for the specified full-path
+##      filename
+#####
+sub getjustpath
+{
+    if ($_[0] =~ /^(.*\/)([^\/]+)$/) {
+        return $1;
+    }
+
+    return $_[0];
+}
+
+#####
+## pathsubbeg - in the full path $_[0], removes $_[1] from
+##      the beginning, and adds (effectively substituting)
+##      $_[2]; note that $_[2] is optional
+#####
+sub pathsubbeg
+{
+    my $origpath = $_[0];
+    my $remove = $_[1];
+    my $replace = ($_[2] ? $_[2] : "");
+
+    ## escape the meta characters in the paths
+    #my $origpath_esc = escapify($origpath);
+    my $remove_esc = escapifypath($remove);
+    my $replace = escapifypath($replace);
+    
+    
+    
 }
