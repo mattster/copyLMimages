@@ -18,8 +18,7 @@ my $silent = "";
 my $dbg = "";
 
 ## other variables we need
-my ($dest_root_esc, $dest_path, $root_rem, $root_rem_esc,
-    $source_root_esc, $srcdir, $srcdir_esc, $curfile_fullpath,
+my ($dest_path, $root_rem, $srcdir, $srcdir_esc, $curfile_fullpath,
     $tmp1, $tmp2, $showhelp);
 my @files = {};
 my $numcopies = 0;
@@ -102,7 +101,7 @@ if ($tmp1) {
 if ($tmp2) {
     $dest_root = fixpathname($tmp2);
 }
-fixpathname($root_rem);
+fixpathname(undslash($root_rem));
 if ($dbg) {
     print "root rem:    $root_rem\n";  
     print "source root: $source_root\n";
@@ -118,10 +117,6 @@ unless ($silent) {print STDERR "writing logs to $logfile\n";}
 ##
 ## read through the directory list
 ##
-#add escapes to the root variables for pattern matching
-$root_rem_esc = escapifypath($root_rem);
-$source_root_esc = escapifypath($source_root);
-$dest_root_esc = escapifypath($dest_root);
 
 unless ($silent) {print STDERR "copying files:\n";}
 while (<>) {
@@ -129,8 +124,7 @@ while (<>) {
         mychomp($_);                    # remove newline / CR
         undslash($_);                   # fix double slashes
         if ($dbg) {print "----- dol _ before = $_\n";}
-        $_ =~ s{^($root_rem_esc)}{$source_root_esc};
-        $_ =~ s{\\}{}g;
+        pathsubbeg($_, $root_rem, $source_root);       
         if ($dbg) {print "----- dol _ after = $_\n";}
 
         # set the source
@@ -139,7 +133,7 @@ while (<>) {
         
     if ($filemode) {    ## running in filemode - get the file
         $srcdir = getjustpath($_);
-        @files = escapifypath($_);
+        @files = $_;
     }
 
     else {              ## get list of files from directory
@@ -157,7 +151,8 @@ while (<>) {
         
         if ($dbg) {print "+++++ curfile_fullpath: $curfile_fullpath\n";}
         # define the destination path
-        ($dest_path = $srcdir) =~ s/^($source_root_esc)?/$dest_root_esc/;
+        $dest_path = pathsubbeg($srcdir, $source_root, $dest_root);
+        fixLMfilename($dest_path);
         if ($dbg) {print "+++++ dest path: $dest_path\n";}
         
         # create dest directory if needed
@@ -218,6 +213,27 @@ sub escapifypath
     $work =~ s/,/\\,/g;
         
     return $work;
+}
+
+#####
+## unescapifypath - remove escape characters from a path
+#####
+sub unescapifypath
+{
+    my $work = $_[0];
+  
+    ## unescape single spaces
+    $work =~ s/\\ / /g;
+    
+    ## unescape parens
+    $work =~ s{\\\(}{\(}g;
+    $work =~ s{\\\)}{\)}g;
+    
+    ## unescape commas
+    $work =~ s/\\,/,/g;
+        
+    return $work;
+    
 }
 
 
@@ -290,7 +306,6 @@ sub mytimestamp
 #####
 sub fixLMfilename
 {
-    #print STDERR "----- starting with $_[0]\n";
     ## add a comma if necessary
     $_[0] =~ s{(\/[A-Z]+)  ([A-Z]+ - )}{$1, $2};
     
@@ -299,8 +314,9 @@ sub fixLMfilename
     
     ## change "scans__" to "scans_"
     $_[0] =~ s/scans__/scans_/;
-    
-    #print STDERR "---- cranked out $_[0]\n";
+ 
+    ## fix problem of missing parens in tif filename
+    $_[0] =~ s/([0-9]+) ([0-9]) (\.tif)$/$1\($2\)$3/;
     return $_[0];
 }
 
@@ -324,15 +340,12 @@ sub getjustpath
 #####
 sub pathsubbeg
 {
-    my $origpath = $_[0];
-    my $remove = $_[1];
-    my $replace = ($_[2] ? $_[2] : "");
-
     ## escape the meta characters in the paths
-    #my $origpath_esc = escapify($origpath);
-    my $remove_esc = escapifypath($remove);
-    my $replace = escapifypath($replace);
+    my $remove_esc = escapifypath($_[1]);
+    my $replace_esc = ($_[2] ? escapifypath($_[2]) : "");
     
+    $_[0] =~ s{^($remove_esc)}{$replace_esc};
+    $_[0] = unescapifypath($_[0]);
     
-    
+    return $_[0]; 
 }
