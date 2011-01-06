@@ -1,0 +1,264 @@
+#!/usr/bin/perl -w
+use warnings;
+use strict;
+use Getopt::Long;
+use File::Copy;
+use File::Path qw(make_path);
+
+my $this = "cpLMimages";
+
+## setup defaults
+my $dest_root = "./";
+my $source_root = "/cygdrive/l/";
+my $filemode = "true";
+my $logfile = "/tmp/$this.log." . mytimestamp() . ".txt";
+my $verbose = "true";
+my $silent = "";
+my $dbg = "";
+
+## other variables we need
+my ($dest_root_esc, $dest_path, $root_rem, $root_rem_esc,
+    $source_root_esc, $srcdir, $srcdir_esc, $curfile_fullpath,
+    $tmp1, $tmp2, $showhelp);
+my @files = {};
+my $numcopies = 0;
+my $usage = <<END;
+
+$this : Copy Lexmark Image files from the Lexmark server to a destination
+
+usage: $0 [OPTIONS] FILE(s)
+
+OPTIONS:
+    -f                      file mode (defualt) - FILE contains a
+                            list of full paths to image file names
+                            to copy
+
+    -d                      directory mode - FILE contains lists of
+                            directories rather than full paths to
+                            image files; will copy only the .tif
+                            files from these directories
+                            
+    --rem <root_rem>        <root_rem> is the portion of the source
+                            directory path to remove from the
+                            beginning of each directory in the
+                            listing;
+                            (defaults to blank)
+
+    --src <src_root>        <src_root> is the root directory of the
+                            image path accessable from this
+                            environment; this is prepended to each
+                            directory processed
+                            (defaults to $source_root)
+
+    --dest <dest_root>      <dest_root> is the destination root path
+                            where the files will be copied;
+                            (defaults to current directory)
+
+FILE(s)
+    in default (file) mode:
+            one or more files with a list of imagefile names with
+            a full path; this could be a direct output from
+            the database, e.g. "
+            select unique imagepath from ACI.BENCHMARK
+            where test_id like '2010-12%'"
+
+    in directory mode:    
+            one or more files with a list of directories with
+            images to be copied
+END
+
+##
+## check for arguments
+##
+if ($#ARGV == -1) {
+    print STDERR $usage;
+    exit -1;
+}
+
+##
+## read in the switches if there are any
+##
+GetOptions ('src:s' => \$tmp1,
+            'dest:s' => \$tmp2,
+            'rem:s' => \$root_rem,
+            'help|h|?' => \$showhelp,
+            'silent' => \$silent,
+            'debug' => \$dbg);
+
+if ($showhelp) {
+    print STDERR $usage;
+    exit -1;
+}
+if ($tmp1) {
+    $source_root = fixpathname($tmp1);
+}
+if ($tmp2) {
+    $dest_root = fixpathname($tmp2);
+}
+fixpathname($root_rem);
+if ($dbg) {
+    print "root rem:    $root_rem\n";  
+    print "source root: $source_root\n";
+    print "dest root:   $dest_root\n\n";
+}
+
+##
+## setup logfile
+##
+open LOGFILE, ">$logfile" or die $!;
+unless ($silent) {print STDERR "writing logs to $logfile\n";}
+        
+##
+## read through the directory list
+##
+
+#add escapes to the root variables for pattern matching
+$root_rem_esc = escapifypath($root_rem);
+$source_root_esc = escapifypath($source_root);
+$dest_root_esc = escapifypath($dest_root);
+
+unless ($silent) {print STDERR "copying files ...\n";}
+while (<>) {
+    ## do root_remove and source_root replacements on current directory
+    mychomp($_);                    # remove newline / CR
+    fixpathname($_);
+    #if ($dbg) {print "----- dol _ before = $_\n";}
+    $_ =~ s{^($root_rem_esc)}{$source_root_esc};
+    $_ =~ s{\\}{}g;
+    #if ($dbg) {print "----- dol _ after = $_\n";}
+    
+    # set the source directory
+    $srcdir = $_;
+    $srcdir_esc = escapifypath($srcdir);
+    if ($dbg) {print "+++++ source dir:\n $srcdir\n";}
+    if ($dbg) {print "+++++ source dir esc:\n $srcdir_esc\n";}
+    
+    ## get list of tif files in source directory
+    @files = <$srcdir_esc*.tif>;
+    if ($dbg) { print "+++++ num files = " . @files . "\n"; }
+    
+    ## copy each file to destination
+    foreach $curfile_fullpath (@files) {
+        if ($dbg) {print "+++++ curfile_fullpath: $curfile_fullpath\n";}
+
+        # define the destination path
+        ($dest_path = $srcdir) =~ s/^($source_root_esc)?/$dest_root_esc/;
+        if ($dbg) {print "+++++ dest path: $dest_path\n";}
+        
+        # create dest directory if needed
+        if ($dbg) {print "++make path $dest_path\n";}
+        make_path($dest_path);
+        
+        # copy the file        
+        writelog("+copying $curfile_fullpath to $dest_path");
+        copy ($curfile_fullpath, $dest_path) or die <<END;
+        
+**** unable to copy file:
+     $curfile_fullpath
+     to
+     $dest_path
+     
+     $!
+****
+END
+        $numcopies++;
+        unless ($silent) {
+            print STDERR "+";
+            if (($numcopies > 0) && ($numcopies % 50 == 0)) {
+                print STDERR "\n";
+            }
+        }
+    }
+}
+
+unless ($silent) {
+    print STDERR "\n\n**** copied $numcopies file" .
+                (($numcopies > 1) ? "s\n" : "\n");}
+writelog("\n\n**** copied $numcopies file" . (($numcopies > 1) ? "s" : " "));
+
+close LOGFILE;
+
+exit 1;
+
+#########################################
+##### functions
+#########################################
+
+#####
+## escapifypath - add escape charaters to a path if there are
+##      any spaces, plus some other stuff
+#####
+sub escapifypath
+{
+    my $work = $_[0];
+  
+    ## replace single spaces
+    $work =~ s/ /\\ /g;
+    
+    ## escape parens
+    $work =~ s{\(}{\\(}g;
+    $work =~ s{\)}{\\)}g;
+    
+    ## escape commas
+    $work =~ s/,/\\,/g;
+        
+    return $work;
+}
+
+
+#####
+## mychomp - remove CR and/or LF / NL; not sure why chomp
+##      doesn't work here, maybe something to do with stupid Windows?
+#####
+sub mychomp
+{
+    $_[0] =~ s/[\n\r]+//;
+    return $_[0];
+}
+
+
+#####
+## fixpathname - adds a / to the end of a pathname if necessary;
+##      also removes double slashes if there are any
+#####
+sub fixpathname
+{
+    # change double slashes to single slashes
+    $_[0] =~ s{[\/]{2}}{\/}g;
+
+    # add a slash to the end of the path if one isn't there
+    $_[0] =~ s{^(.*)([^\/])$}{$1$2\/};
+    
+    return $_[0];
+}
+
+#####
+## writelog - write a log message to the logfile
+#####
+sub writelog
+{
+    print LOGFILE "$_[0]\n\n";
+    
+    return 1;
+}
+
+
+#####
+## mytimestamp - returns a string with a nice timestamp in
+##      the format YYYYMMDDHHMMSS
+#####
+sub mytimestamp
+{
+    my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst);
+    ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) =
+                                                localtime(time);
+    
+    $year += 1900;
+    $mon++;
+    my $dmon = sprintf("%02d", $mon);
+    my $dmday = sprintf("%02d", $mday);
+    my $dhour = sprintf("%02d", $hour);
+    my $dmin = sprintf("%02d", $min);
+    my $dsec = sprintf("%02d", $sec);
+    return $year . $dmon . $dmday . $dhour . $dmin . $dsec;
+}
