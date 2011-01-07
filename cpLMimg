@@ -10,6 +10,7 @@ my $thisisme = "cpLMimages";
 ## setup defaults
 my $dest_root = "./";
 my $source_root = "/cygdrive/l/";
+my $root_rem = "c:/grading//";
 my $filemode = 1;
 my $dirmode = 0;
 my $logfile = "/tmp/$thisisme.log." . mytimestamp() . ".txt";
@@ -18,7 +19,7 @@ my $silent = "";
 my $dbg = "";
 
 ## other variables we need
-my ($dest_path, $root_rem, $srcdir, $srcdir_esc, $curfile_fullpath,
+my ($dest_path, $srcdir, $srcdir_esc, $curfile_fullpath,
     $tmp1, $tmp2, $showhelp);
 my @files = {};
 my $numcopies = 0;
@@ -42,7 +43,7 @@ OPTIONS:
                             directory path to remove from the
                             beginning of each directory in the
                             listing;
-                            (defaults to blank)
+                            (defaults to $root_rem)
 
     --src <src_root>        <src_root> is the root directory of the
                             image path accessable from this
@@ -174,8 +175,11 @@ END
         $numcopies++;
         unless ($silent) {
             print STDERR "+";
+            if (($numcopies > 0) && ($numcopies % 5 == 0)) {
+                print STDERR " ";
+            }
             if (($numcopies > 0) && ($numcopies % 50 == 0)) {
-                print STDERR "\n";
+                print STDERR " ($numcopies)\n";
             }
         }
     }
@@ -307,10 +311,10 @@ sub mytimestamp
 sub fixLMfilename
 {
     ## add a comma if necessary
-    $_[0] =~ s{(\/[A-Z]+)  ([A-Z]+ - )}{$1, $2};
+    $_[0] =~ s{(\/[A-Z|-]+)  ([A-Z]+[-| ]?[A-Z]+ - )}{$1, $2};
     
     ## add a comma even if the double spaces are escaped
-    $_[0] =~ s{(\/[A-Z]+)\\ \\ ([A-Z]+\\ -\\ )}{$1\\,\\ $2};
+    $_[0] =~ s{(\/[A-Z|-]+)\\ \\ ([A-Z]+[-| ]?[A-Z]+\\ -\\ )}{$1\\,\\ $2};
     
     ## change "scans__" to "scans_"
     $_[0] =~ s/scans__/scans_/;
