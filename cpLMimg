@@ -40,7 +40,7 @@ OPTIONS:
                             Lexmark-modified filenames listed in the
                             FILE(s); default is to keep the original
                             filenames, but this will cause the names
-                            to be slightly different that what Lexmark
+                            to be slightly different than what Lexmark
                             writes to the database in some cases
 
     --rem <root_rem>        <root_rem> is the portion of the source
@@ -179,16 +179,10 @@ while (<>) {
 
         # copy the file
         writelog("+copying $curfile_fullpath to $destination");
-        copy ($curfile_fullpath, $destination) or die <<END;
-        
-**** unable to copy file:
-     $curfile_fullpath
-     to
-     $dest_path
-     
-     $!
-****
-END
+        if (!(copy ($curfile_fullpath, $destination))) {
+                print STDERR "\nunable to copy file: $curfile_fullpath: $!\n";
+                next;
+        }
         $numcopies++;
         unless ($silent) {
             print STDERR "+";
