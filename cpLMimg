@@ -13,14 +13,15 @@ my $source_root = "/cygdrive/l/";
 my $root_rem = "c:/grading//";
 my $filemode = 1;
 my $dirmode = 0;
+my $rename = 0;
 my $logfile = "/tmp/$thisisme.log." . mytimestamp() . ".txt";
 my $verbose = "true";
 my $silent = "";
 my $dbg = "";
 
 ## other variables we need
-my ($dest_path, $srcdir, $srcdir_esc, $curfile_fullpath,
-    $tmp1, $tmp2, $showhelp);
+my ($destination, $dest_path, $srcdir, $srcdir_esc, $curfile_fullpath,
+    $rename_to, $tmp1, $tmp2, $showhelp);
 my @files = {};
 my $numcopies = 0;
 my $usage = <<END;
@@ -30,15 +31,18 @@ $thisisme : Copy Lexmark Image files from the Lexmark server to a destination
 usage: $thisisme [OPTIONS] FILE(s)
 
 OPTIONS:
-    -f                      file mode (defualt) - FILE contains a
-                            list of full paths to image file names
-                            to copy
-
     -d                      directory mode - FILE contains lists of
                             directories rather than full paths to
                             image files; will copy only the .tif
                             files from these directories
                             
+    --rename                rename the copied files to the
+                            Lexmark-modified filenames listed in the
+                            FILE(s); default is to keep the original
+                            filenames, but this will cause the names
+                            to be slightly different that what Lexmark
+                            writes to the database in some cases
+
     --rem <root_rem>        <root_rem> is the portion of the source
                             directory path to remove from the
                             beginning of each directory in the
@@ -59,9 +63,7 @@ FILE(s)
     in default (file) mode:
             one or more files with a list of imagefile names with
             a full path; this could be a direct output from
-            the database, e.g. "
-            select unique imagepath from ACI.BENCHMARK
-            where test_id like '2010-12%'"
+            the ANSWERS column in the BENCHMARK database
 
     in directory mode:    
             one or more files with a list of directories with
@@ -82,6 +84,7 @@ if ($#ARGV == -1) {
 ##
 GetOptions ('f' => \$filemode,
             'd' => \$dirmode,
+            'rename' => \$rename,
             'src:s' => \$tmp1,
             'dest:s' => \$tmp2,
             'rem:s' => \$root_rem,
@@ -135,10 +138,9 @@ while (<>) {
     if ($filemode) {    ## running in filemode - get the file
         $srcdir = getjustpath($_);
         @files = $_;
+        
     }
-
     else {              ## get list of files from directory
-        ## get list of tif files in source directory
         fixpathname($srcdir);       #add trailing slash if needed
         $srcdir_esc = escapifypath($srcdir);
         @files = <$srcdir_esc*.tif>;
@@ -148,21 +150,36 @@ while (<>) {
     
     ## copy each file to destination
     foreach $curfile_fullpath (@files) {
+        $rename_to = $curfile_fullpath;
         fixLMfilename($curfile_fullpath);        
-        
         if ($dbg) {print "+++++ curfile_fullpath: $curfile_fullpath\n";}
+        
         # define the destination path
-        $dest_path = pathsubbeg($srcdir, $source_root, $dest_root);
-        fixLMfilename($dest_path);
+        if ($rename) {
+            $dest_path = $rename_to;
+            $dest_path = pathsubbeg($srcdir, $source_root, $dest_root);
+        }
+        else {
+            $dest_path = pathsubbeg($srcdir, $source_root, $dest_root);
+            fixLMfilename($dest_path);            
+        }
         if ($dbg) {print "+++++ dest path: $dest_path\n";}
         
         # create dest directory if needed
         if ($dbg) {print "++make path $dest_path\n";}
         make_path($dest_path);
         
-        # copy the file        
-        writelog("+copying $curfile_fullpath to $dest_path");
-        copy ($curfile_fullpath, $dest_path) or die <<END;
+        # set the destination - rename the file back to the original if needed
+        if ($rename) {
+            $destination = "$dest_path" . getjustfilename($rename_to);
+        }
+        else {
+            $destination = $dest_path;
+        }
+
+        # copy the file
+        writelog("+copying $curfile_fullpath to $destination");
+        copy ($curfile_fullpath, $destination) or die <<END;
         
 **** unable to copy file:
      $curfile_fullpath
@@ -332,6 +349,19 @@ sub getjustpath
 {
     if ($_[0] =~ /^(.*\/)([^\/]+)$/) {
         return $1;
+    }
+
+    return $_[0];
+}
+
+#####
+## getjustfilename - returns just the filename for the specified
+##      filename with a full path
+#####
+sub getjustfilename
+{
+    if ($_[0] =~ /^(.*\/)([^\/]+)$/) {
+        return $2;
     }
 
     return $_[0];
